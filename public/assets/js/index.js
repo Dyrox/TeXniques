@@ -24,6 +24,8 @@ let isRoomHost = false;
 let roomUnsubscribe = null;
 let playersUnsubscribe = null;
 let latestVsPlayers = [];
+let latestVsRoom = null;
+let rematchStarting = false;
 
 if (!currentPlayerId) {
     currentPlayerId = "player-" + Math.random().toString(36).slice(2, 12);
@@ -95,9 +97,13 @@ function resetVsState() {
     currentPlayerName = "";
     isRoomHost = false;
     latestVsPlayers = [];
+    latestVsRoom = null;
+    rematchStarting = false;
     $("#vs-room").hide();
     $("#vs-game-panel").hide();
     $("#vs-final-scoreboard").hide().empty();
+    $("#vs-rematch-status").hide().text("");
+    $("#vs-rematch-button").hide().prop("disabled", false).text("Rematch");
     $("#leaderboard-section").show();
 }
 
@@ -135,6 +141,7 @@ function getRoomStartMillis(startAt) {
 function renderVsPlayers(containerSelector, players) {
     const container = $(containerSelector);
     container.empty();
+    const showReady = containerSelector === "#vs-final-scoreboard";
 
     if (players.length === 0) {
         container.append("<p>No players yet.</p>");
@@ -147,7 +154,7 @@ function renderVsPlayers(containerSelector, players) {
         .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
         .forEach((player, index) => {
             container.append(`
-                <div class="vs-player-row">
+                <div class="vs-player-row${showReady && player.rematchReady ? " ready" : ""}">
                     <span class="name">#${index + 1} ${escapeHtml(player.name)}</span>
                     <span class="score">${player.score || 0} points</span>
                 </div>
@@ -167,9 +174,12 @@ function watchVsRoom(roomId) {
         }
 
         const room = doc.data();
+        latestVsRoom = room;
         $("#vs-room-status").text(room.status === "waiting" ? "Waiting for players..." : "Match in progress.");
 
         if (room.status === "active" && !vsGameStarted) {
+            $("#vs-rematch-button").hide().prop("disabled", false).text("Rematch");
+            $("#vs-rematch-status").hide().text("");
             startVsMatch(room);
         }
 
@@ -189,6 +199,8 @@ function watchVsRoom(roomId) {
         renderVsPlayers("#vs-lobby-player-list", latestVsPlayers);
         renderVsPlayers("#vs-game-scoreboard", latestVsPlayers);
         renderVsPlayers("#vs-final-scoreboard", latestVsPlayers);
+        updateRematchStatus();
+        checkRematchReady();
     }, (error) => {
         console.error("Error watching players:", error);
     });
@@ -207,6 +219,7 @@ async function joinVsRoom(roomId, name, host) {
         score: 0,
         numCorrect: 0,
         problemNumber: 0,
+        rematchReady: false,
         active: true,
         joinedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
@@ -242,6 +255,7 @@ async function createVsRoom() {
         hostId: currentPlayerId,
         problemOrder: order,
         duration: TIMEOUT_SECONDS,
+        rematchVersion: 0,
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
@@ -280,6 +294,7 @@ async function startVsRoom() {
 
     await db.collection("rooms").doc(currentRoomId).update({
         status: "active",
+        rematchVersion: firebase.firestore.FieldValue.increment(1),
         startAt: firebase.firestore.Timestamp.fromDate(new Date()),
         startedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -321,6 +336,7 @@ function startVsMatch(room) {
     oldVal = "";
     problemsOrder = room.problemOrder || [...Array(problems.length).keys()];
     skippedProblems = [];
+    rematchStarting = false;
 
     $("#intro-window").hide();
     $("#vs-lobby-window").hide();
@@ -329,6 +345,8 @@ function startVsMatch(room) {
     $("#vs-game-panel").show();
     $("#vs-game-room-code").text(currentRoomId);
     $("#skipped-problems").html("").hide();
+    $("#vs-rematch-button").hide().prop("disabled", false).text("Rematch");
+    $("#vs-rematch-status").hide().text("");
     $("#score").text(0);
 
     displayLaTeXInBody();
@@ -346,6 +364,7 @@ async function updateVsPlayerProgress() {
         score: currentScore,
         numCorrect: numCorrect,
         problemNumber: problemNumber,
+        rematchReady: false,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
 }
@@ -370,6 +389,94 @@ async function finishVsRoom() {
     } else {
         endGame();
     }
+}
+
+function activeVsPlayers() {
+    return latestVsPlayers.filter(player => player.active !== false);
+}
+
+function updateRematchStatus() {
+    if (!isVsMode || !latestVsRoom || latestVsRoom.status !== "finished") {
+        return;
+    }
+
+    const activePlayers = activeVsPlayers();
+    const readyCount = activePlayers.filter(player => player.rematchReady).length;
+    const totalCount = activePlayers.length;
+
+    $("#vs-rematch-status")
+        .show()
+        .text("Rematch ready: " + readyCount + "/" + totalCount);
+
+    const currentPlayer = activePlayers.find(player => player.id === currentPlayerId);
+    if (currentPlayer && currentPlayer.rematchReady) {
+        $("#vs-rematch-button").prop("disabled", true).text("Waiting...");
+    }
+}
+
+async function requestRematch() {
+    if (!isVsMode || !currentRoomId) {
+        return;
+    }
+
+    $("#vs-rematch-button").prop("disabled", true).text("Waiting...");
+    await db.collection("rooms").doc(currentRoomId).collection("players").doc(currentPlayerId).set({
+        rematchReady: true,
+        rematchReadyAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+}
+
+async function checkRematchReady() {
+    if (!isVsMode || !currentRoomId || !latestVsRoom || latestVsRoom.status !== "finished" || rematchStarting) {
+        return;
+    }
+
+    const activePlayers = activeVsPlayers();
+    if (activePlayers.length === 0 || activePlayers.some(player => !player.rematchReady)) {
+        return;
+    }
+
+    rematchStarting = true;
+    const order = [...Array(problems.length).keys()];
+    shuffleArray(order);
+
+    const roomRef = db.collection("rooms").doc(currentRoomId);
+    const didStart = await db.runTransaction(async (transaction) => {
+        const roomDoc = await transaction.get(roomRef);
+        if (!roomDoc.exists || roomDoc.data().status !== "finished") {
+            return false;
+        }
+
+        transaction.update(roomRef, {
+            status: "active",
+            problemOrder: order,
+            startAt: firebase.firestore.Timestamp.fromDate(new Date()),
+            rematchVersion: firebase.firestore.FieldValue.increment(1),
+            rematchedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        return true;
+    });
+
+    if (!didStart) {
+        rematchStarting = false;
+        return;
+    }
+
+    const playersSnapshot = await roomRef.collection("players").get();
+    const batch = db.batch();
+    playersSnapshot.forEach((doc) => {
+        const player = doc.data();
+        if (player.active !== false) {
+            batch.set(doc.ref, {
+                score: 0,
+                numCorrect: 0,
+                problemNumber: 0,
+                rematchReady: false,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
+    });
+    await batch.commit();
 }
 
 function toggleShowSkipped() {
@@ -418,10 +525,15 @@ function endGame() {
         $("#score-submission").hide();
         $("#leaderboard-section").hide();
         $("#vs-final-scoreboard").show();
+        $("#vs-rematch-status").show();
+        $("#vs-rematch-button").show().prop("disabled", false).text("Rematch");
+        updateRematchStatus();
         vsGameStarted = false;
     } else {
         $("#leaderboard-section").show();
         $("#vs-final-scoreboard").hide();
+        $("#vs-rematch-status").hide();
+        $("#vs-rematch-button").hide();
     }
     
     // Load initial leaderboard
@@ -713,6 +825,14 @@ $(document).ready(function() {
         startVsRoom().catch((error) => {
             console.error("Error starting VS room:", error);
             alert("Could not start match.");
+        });
+    });
+
+    $("#vs-rematch-button").click(function() {
+        requestRematch().catch((error) => {
+            console.error("Error requesting rematch:", error);
+            alert("Could not request rematch.");
+            $("#vs-rematch-button").prop("disabled", false).text("Rematch");
         });
     });
 

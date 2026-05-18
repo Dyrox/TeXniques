@@ -371,6 +371,11 @@ label {
 	max-width: 500px;
 }
 
+#vs-rematch-status {
+	margin-top: 15px;
+	margin-bottom: 10px;
+}
+
 #vs-game-panel {
 	clear: both;
 	margin-top: 25px;
@@ -400,4 +405,10 @@ label {
 .vs-player-row .score {
 	font-weight: bold;
 	flex-shrink: 0;
+}
+
+.vs-player-row.ready .name:after {
+	content: ' ready';
+	color: #080;
+	font-weight: bold;
 }
