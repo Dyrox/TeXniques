@@ -15,6 +15,20 @@ let mobile = false;
 let showShadow = false;
 let skippedProblems = [];
 let showSkipped = false;
+let isVsMode = false;
+let vsGameStarted = false;
+let currentRoomId = null;
+let currentPlayerId = localStorage.getItem("texniquePlayerId") || null;
+let currentPlayerName = "";
+let isRoomHost = false;
+let roomUnsubscribe = null;
+let playersUnsubscribe = null;
+let latestVsPlayers = [];
+
+if (!currentPlayerId) {
+    currentPlayerId = "player-" + Math.random().toString(36).slice(2, 12);
+    localStorage.setItem("texniquePlayerId", currentPlayerId);
+}
 
 function mobileCheck() {
   var check = false;
@@ -56,10 +70,306 @@ function startTimer(onTimeoutFunc) {
         secondsRemaining--;
         displayTime(secondsRemaining);
         if (secondsRemaining == 0) {
-            clearInterval(timer);
+            clearInterval(gameTimer);
             onTimeoutFunc();
         }
     }, 1000);
+}
+
+function cleanupVsListeners() {
+    if (roomUnsubscribe) {
+        roomUnsubscribe();
+        roomUnsubscribe = null;
+    }
+    if (playersUnsubscribe) {
+        playersUnsubscribe();
+        playersUnsubscribe = null;
+    }
+}
+
+function resetVsState() {
+    cleanupVsListeners();
+    isVsMode = false;
+    vsGameStarted = false;
+    currentRoomId = null;
+    currentPlayerName = "";
+    isRoomHost = false;
+    latestVsPlayers = [];
+    $("#vs-room").hide();
+    $("#vs-game-panel").hide();
+    $("#vs-final-scoreboard").hide().empty();
+    $("#leaderboard-section").show();
+}
+
+function generateRoomCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let code = "";
+    for (let i = 0; i < 5; i++) {
+        code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    return code;
+}
+
+function getVsPlayerName() {
+    const name = $("#vs-player-name").val().trim();
+    if (name.length === 0) {
+        alert("Please enter your name");
+        return null;
+    }
+    return name.slice(0, 30);
+}
+
+function getRoomStartMillis(startAt) {
+    if (!startAt) {
+        return Date.now();
+    }
+    if (typeof startAt.toMillis === "function") {
+        return startAt.toMillis();
+    }
+    if (startAt.seconds) {
+        return startAt.seconds * 1000;
+    }
+    return Date.now();
+}
+
+function renderVsPlayers(containerSelector, players) {
+    const container = $(containerSelector);
+    container.empty();
+
+    if (players.length === 0) {
+        container.append("<p>No players yet.</p>");
+        return;
+    }
+
+    players
+        .slice()
+        .filter(player => player.active !== false)
+        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+        .forEach((player, index) => {
+            container.append(`
+                <div class="vs-player-row">
+                    <span class="name">#${index + 1} ${escapeHtml(player.name)}</span>
+                    <span class="score">${player.score || 0} points</span>
+                </div>
+            `);
+        });
+}
+
+function watchVsRoom(roomId) {
+    cleanupVsListeners();
+
+    const roomRef = db.collection("rooms").doc(roomId);
+    roomUnsubscribe = roomRef.onSnapshot((doc) => {
+        if (!doc.exists) {
+            alert("This room no longer exists.");
+            showIntro();
+            return;
+        }
+
+        const room = doc.data();
+        $("#vs-room-status").text(room.status === "waiting" ? "Waiting for players..." : "Match in progress.");
+
+        if (room.status === "active" && !vsGameStarted) {
+            startVsMatch(room);
+        }
+
+        if (room.status === "finished" && vsGameStarted) {
+            endGame();
+        }
+    }, (error) => {
+        console.error("Error watching room:", error);
+        alert("Could not watch this room.");
+    });
+
+    playersUnsubscribe = roomRef.collection("players").onSnapshot((snapshot) => {
+        latestVsPlayers = [];
+        snapshot.forEach((doc) => {
+            latestVsPlayers.push(Object.assign({ id: doc.id }, doc.data()));
+        });
+        renderVsPlayers("#vs-lobby-player-list", latestVsPlayers);
+        renderVsPlayers("#vs-game-scoreboard", latestVsPlayers);
+        renderVsPlayers("#vs-final-scoreboard", latestVsPlayers);
+    }, (error) => {
+        console.error("Error watching players:", error);
+    });
+}
+
+async function joinVsRoom(roomId, name, host) {
+    currentRoomId = roomId.toUpperCase();
+    currentPlayerName = name;
+    isRoomHost = host;
+    isVsMode = true;
+    vsGameStarted = false;
+
+    const playerRef = db.collection("rooms").doc(currentRoomId).collection("players").doc(currentPlayerId);
+    await playerRef.set({
+        name: currentPlayerName,
+        score: 0,
+        numCorrect: 0,
+        problemNumber: 0,
+        active: true,
+        joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    $("#intro-window").hide();
+    $("#ending-window").hide();
+    $("#vs-lobby-window").show();
+    $("#vs-room").show();
+    $("#vs-room-code").text(currentRoomId);
+    $("#vs-start-room-button").toggle(isRoomHost);
+    watchVsRoom(currentRoomId);
+}
+
+async function createVsRoom() {
+    const name = getVsPlayerName();
+    if (!name) {
+        return;
+    }
+
+    let roomId = generateRoomCode();
+    let roomRef = db.collection("rooms").doc(roomId);
+    let roomDoc = await roomRef.get();
+    while (roomDoc.exists) {
+        roomId = generateRoomCode();
+        roomRef = db.collection("rooms").doc(roomId);
+        roomDoc = await roomRef.get();
+    }
+
+    const order = [...Array(problems.length).keys()];
+    shuffleArray(order);
+    await roomRef.set({
+        status: "waiting",
+        hostId: currentPlayerId,
+        problemOrder: order,
+        duration: TIMEOUT_SECONDS,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    await joinVsRoom(roomId, name, true);
+}
+
+async function joinExistingVsRoom() {
+    const name = getVsPlayerName();
+    if (!name) {
+        return;
+    }
+
+    const roomId = $("#vs-room-code-input").val().trim().toUpperCase();
+    if (roomId.length === 0) {
+        alert("Please enter a room code");
+        return;
+    }
+
+    const roomDoc = await db.collection("rooms").doc(roomId).get();
+    if (!roomDoc.exists) {
+        alert("Room not found");
+        return;
+    }
+    if (roomDoc.data().status !== "waiting") {
+        alert("This match has already started");
+        return;
+    }
+
+    await joinVsRoom(roomId, name, roomDoc.data().hostId === currentPlayerId);
+}
+
+async function startVsRoom() {
+    if (!currentRoomId || !isRoomHost) {
+        return;
+    }
+
+    await db.collection("rooms").doc(currentRoomId).update({
+        status: "active",
+        startAt: firebase.firestore.Timestamp.fromDate(new Date()),
+        startedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+}
+
+function startVsTimer(room) {
+    clearInterval(gameTimer);
+    const duration = room.duration || TIMEOUT_SECONDS;
+    const startMillis = getRoomStartMillis(room.startAt);
+
+    function tick() {
+        const elapsed = Math.floor((Date.now() - startMillis) / 1000);
+        const remaining = Math.max(duration - elapsed, 0);
+        displayTime(remaining);
+
+        if (remaining === 0) {
+            clearInterval(gameTimer);
+            if (isRoomHost && currentRoomId) {
+                db.collection("rooms").doc(currentRoomId).update({
+                    status: "finished",
+                    finishedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+            } else {
+                endGame();
+            }
+        }
+    }
+
+    tick();
+    gameTimer = setInterval(tick, 1000);
+}
+
+function startVsMatch(room) {
+    isVsMode = true;
+    vsGameStarted = true;
+    problemNumber = 0;
+    currentScore = 0;
+    numCorrect = 0;
+    oldVal = "";
+    problemsOrder = room.problemOrder || [...Array(problems.length).keys()];
+    skippedProblems = [];
+
+    $("#intro-window").hide();
+    $("#vs-lobby-window").hide();
+    $("#ending-window").hide();
+    $("#game-window").show();
+    $("#vs-game-panel").show();
+    $("#vs-game-room-code").text(currentRoomId);
+    $("#skipped-problems").html("").hide();
+    $("#score").text(0);
+
+    displayLaTeXInBody();
+    loadProblem();
+    startVsTimer(room);
+}
+
+async function updateVsPlayerProgress() {
+    if (!isVsMode || !currentRoomId) {
+        return;
+    }
+
+    await db.collection("rooms").doc(currentRoomId).collection("players").doc(currentPlayerId).set({
+        name: currentPlayerName,
+        score: currentScore,
+        numCorrect: numCorrect,
+        problemNumber: problemNumber,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+}
+
+async function leaveVsRoom() {
+    if (currentRoomId) {
+        await db.collection("rooms").doc(currentRoomId).collection("players").doc(currentPlayerId).set({
+            active: false,
+            leftAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+    }
+    showIntro();
+}
+
+async function finishVsRoom() {
+    await updateVsPlayerProgress();
+    if (isRoomHost && currentRoomId) {
+        await db.collection("rooms").doc(currentRoomId).update({
+            status: "finished",
+            finishedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+    } else {
+        endGame();
+    }
 }
 
 function toggleShowSkipped() {
@@ -69,8 +379,11 @@ function toggleShowSkipped() {
 }
 
 function showIntro() {
+    resetVsState();
+    clearInterval(gameTimer);
     $("#game-window").hide();
     $("#ending-window").hide();
+    $("#vs-lobby-window").hide();
     $("#intro-window").show();
     $("#score-submission").show();
 
@@ -88,19 +401,33 @@ function showIntro() {
 }
 
 function endGame() {
-    clearTimeout(gameTimer);
+    clearInterval(gameTimer);
 
     $("#intro-window").hide();
+    $("#vs-lobby-window").hide();
     $("#game-window").hide();
     $("#ending-window").show();
+    $("#vs-game-panel").hide();
     displayLaTeXInBody();
 
     let problemsText = numCorrect + ((numCorrect == 1) ? " problem" : " problems");
     let endingText = "You finished " + problemsText + " for a total score of " + currentScore;
     $("#ending-text").text(endingText);
+
+    if (isVsMode) {
+        $("#score-submission").hide();
+        $("#leaderboard-section").hide();
+        $("#vs-final-scoreboard").show();
+        vsGameStarted = false;
+    } else {
+        $("#leaderboard-section").show();
+        $("#vs-final-scoreboard").hide();
+    }
     
     // Load initial leaderboard
-    loadLeaderboard('today');
+    if (!isVsMode) {
+        loadLeaderboard('today');
+    }
     
     skippedProblems.forEach(idx => {
       let target = problems[problemsOrder[idx % problems.length]];
@@ -137,6 +464,7 @@ function endGame() {
 
 
 function startGame(useTimer) {
+    resetVsState();
     problemNumber = 0;
     currentScore = 0;
     numCorrect = 0;
@@ -269,6 +597,7 @@ function validateProblem() {
                 $('#out').parent().addClass("correct");
                 $('#user-input').prop("disabled", true);
                 $("#score").text(currentScore);
+                updateVsPlayerProgress();
 
                 // Load new problem
                 setTimeout(loadProblem, 1500);
@@ -355,6 +684,53 @@ $(document).ready(function() {
         startGame(false);
     });
 
+    $("#start-button-vs").click(function() {
+        resetVsState();
+        $("#intro-window").hide();
+        $("#ending-window").hide();
+        $("#game-window").hide();
+        $("#vs-lobby-window").show();
+        $("#vs-setup").show();
+        $("#vs-room").hide();
+        $("#vs-player-name").focus();
+    });
+
+    $("#vs-create-room-button").click(function() {
+        createVsRoom().catch((error) => {
+            console.error("Error creating VS room:", error);
+            alert("Could not create room.");
+        });
+    });
+
+    $("#vs-join-room-button").click(function() {
+        joinExistingVsRoom().catch((error) => {
+            console.error("Error joining VS room:", error);
+            alert("Could not join room.");
+        });
+    });
+
+    $("#vs-start-room-button").click(function() {
+        startVsRoom().catch((error) => {
+            console.error("Error starting VS room:", error);
+            alert("Could not start match.");
+        });
+    });
+
+    $("#vs-leave-room-button").click(function() {
+        leaveVsRoom().catch((error) => {
+            console.error("Error leaving VS room:", error);
+            showIntro();
+        });
+    });
+
+    $("#vs-back-button").click(function() {
+        showIntro();
+    });
+
+    $("#vs-room-code-input").on("input", function() {
+        $(this).val($(this).val().toUpperCase());
+    });
+
     $("#reset-button-timed").click(function() {
         startGame(true);
     });
@@ -366,6 +742,7 @@ $(document).ready(function() {
     $("#skip-button").click(function() {
         skippedProblems.push(problemNumber - 1);
         loadProblem();
+        updateVsPlayerProgress();
     });
 
     $("#show-skipped-button").click(function() {
@@ -373,7 +750,14 @@ $(document).ready(function() {
     })
 
     $("#end-game-button").click(function() {
-        endGame();
+        if (isVsMode) {
+            finishVsRoom().catch((error) => {
+                console.error("Error ending VS room:", error);
+                endGame();
+            });
+        } else {
+            endGame();
+        }
     });
 
     $("#user-input").on("change keyup paste", function() {

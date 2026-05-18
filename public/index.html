@@ -102,6 +102,7 @@
 
         <button id="start-button-timed" class="latex-button">Timed Game</button>
         <button id="start-button-untimed" class="latex-button">Zen Mode</button>
+        <button id="start-button-vs" class="latex-button">VS Mode</button>
 
         <br><br><br>
 
@@ -118,6 +119,26 @@
             <li>Use <a href="http://detexify.kirelabs.org/classify.html">Detexify</a> to quickly look up unknown symbols
             </li>
           </ul>
+        </div>
+      </div>
+
+      <div id="vs-lobby-window" style="display: none;">
+        <h1>VS Mode</h1>
+        <div id="vs-setup">
+          <input type="text" id="vs-player-name" maxlength="30" placeholder="Your name">
+          <input type="text" id="vs-room-code-input" maxlength="6" placeholder="Room code">
+          <button id="vs-create-room-button" class="latex-button">Create Room</button>
+          <button id="vs-join-room-button" class="latex-button">Join Room</button>
+          <button id="vs-back-button" class="latex-button">Back</button>
+        </div>
+
+        <div id="vs-room" style="display: none;">
+          <p>Room Code: <b id="vs-room-code"></b></p>
+          <p id="vs-room-status"></p>
+          <div id="vs-lobby-player-list"></div>
+          <br>
+          <button id="vs-start-room-button" class="latex-button">Start Match</button>
+          <button id="vs-leave-room-button" class="latex-button">Leave Room</button>
         </div>
       </div>
 
@@ -151,6 +172,7 @@
         <p id="show-skipped-message" style="display: none;">Check out the problems you skipped?</p>
         <button id="show-skipped-button" class="latex-button" style="display: none;">Show Skipped</button>
         <div id="skipped-problems"></div>
+        <div id="vs-final-scoreboard" style="display: none;"></div>
         <br><br>
         <button id="play-again-button" class="latex-button">Play Again!</button>
       </div>
@@ -163,6 +185,11 @@
           </span>
           <span id="score-wrapper"> <b> Score: &nbsp; </b> <span id="score"></span></span>
           <span id="timer-wrapper"> <b> Time: &nbsp; </b> <span id="timer"></span></span>
+        </div>
+
+        <div id="vs-game-panel" style="display: none;">
+          <span>Room <b id="vs-game-room-code"></b></span>
+          <div id="vs-game-scoreboard"></div>
         </div>
 
         <br><br>

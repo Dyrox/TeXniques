@@ -18,7 +18,7 @@ main {
 	text-align: center;
 }
 
-#intro-window, #ending-window {
+#intro-window, #ending-window, #vs-lobby-window {
 	text-align: center;
 }
 
@@ -334,4 +334,70 @@ label {
     padding: 8px 16px;
     font-size: 16px;
     cursor: pointer;
+}
+
+#vs-lobby-window {
+	max-width: 620px;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+#vs-setup {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 10px;
+}
+
+#vs-player-name, #vs-room-code-input {
+	padding: 8px;
+	font-size: 1em;
+	border: solid 2px black;
+	font-family: KaTeX_Main, serif;
+}
+
+#vs-player-name:focus, #vs-room-code-input:focus {
+	outline: none;
+	border-color: #666;
+}
+
+#vs-room-code-input {
+	text-transform: uppercase;
+	width: 110px;
+}
+
+#vs-lobby-player-list, #vs-final-scoreboard, #vs-game-scoreboard {
+	margin: 15px auto;
+	max-width: 500px;
+}
+
+#vs-game-panel {
+	clear: both;
+	margin-top: 25px;
+	padding-top: 12px;
+	border-top: solid 1px #ddd;
+	text-align: center;
+}
+
+.vs-player-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 8px 16px;
+	border: 1px solid #ddd;
+	margin: 5px 0;
+	text-align: left;
+	background: #fff;
+}
+
+.vs-player-row .name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	margin-right: 20px;
+}
+
+.vs-player-row .score {
+	font-weight: bold;
+	flex-shrink: 0;
 }

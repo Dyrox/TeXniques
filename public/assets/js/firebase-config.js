@@ -13,3 +13,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+
+if (window.location.protocol === "http:" && window.location.port) {
+  db.useEmulator("127.0.0.1", 8080);
+}
