@@ -495,7 +495,7 @@ function showIntro() {
     $("#score-submission").show();
 
     let introText =  "This is a game to test your \\(\\LaTeX\\) skills. <br/> <br/>" +
-                     " Type as many formulas as you can in " + TIMEOUT_STRING + " (timed game), or play an untimed game (zen mode)!";
+                     " Type as many formulas as you can in " + TIMEOUT_STRING + " (timed game), play an untimed game (zen mode), or challenge a friend in VS mode!";
     $("#intro-text").html(introText);
 
     if (mobileCheck()) {
