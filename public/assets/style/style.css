@@ -85,26 +85,39 @@ main {
 
 
 #left-buttons {
-	float: left;
-	display: inline-block;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
 }
 
 #skip-button, #end-game-button {
-	margin-top: -10px;
+	margin-top: 0;
 }
 
 #top-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 20px;
+	flex-wrap: wrap;
 }
 
 #score-wrapper {
-	display: inline-block;
-  	width: 80px;
-  	margin-left: calc(50% - 315px);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 80px;
+	white-space: nowrap;
+	flex: 0 0 auto;
 }
 
 #timer-wrapper {
-	display: inline-block;
-  	float: right;
+	display: inline-flex;
+	align-items: center;
+	justify-content: flex-end;
+	min-width: 140px;
+	white-space: nowrap;
+	flex: 0 0 auto;
 }
 
 #score {
